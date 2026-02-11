@@ -1,4 +1,4 @@
-# OpenVoice Walking Skeleton
+# OpenVoice
 
 ## Prerequisites
 - Go 1.22+
@@ -11,15 +11,20 @@ npm install
 npm run build
 ```
 
-This writes production files to `cmd/server/dist` for Go embedding.
-
 ## Run Server
 ```bash
 go run ./cmd/server
 ```
 
+(Also supported: `go run main.go`.)
+
 Server starts on `http://localhost:8080`.
 
-## Verify
-- Frontend: `http://localhost:8080`
-- Health API: `http://localhost:8080/api/health`
+## API Endpoints
+- `GET /api/health`
+- `POST /api/register`
+- `POST /api/login`
+- `POST /api/logout`
+- `GET /api/me`
+- `GET /api/channels` (auth required)
+- `POST /api/channels` (auth required)

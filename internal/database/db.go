@@ -43,5 +43,42 @@ func InitDB(dbPath string) (*sql.DB, error) {
 		return nil, fmt.Errorf("enable wal mode: %w", err)
 	}
 
+	if err := createSchema(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
 	return db, nil
+}
+
+func createSchema(ctx context.Context, db *sql.DB) error {
+	const schemaSQL = `
+CREATE TABLE IF NOT EXISTS users (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	username TEXT NOT NULL UNIQUE,
+	password_hash TEXT NOT NULL,
+	created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+	token TEXT PRIMARY KEY,
+	user_id INTEGER NOT NULL,
+	expires_at DATETIME NOT NULL,
+	created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS channels (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	name TEXT NOT NULL UNIQUE,
+	type TEXT NOT NULL,
+	created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`
+
+	if _, err := db.ExecContext(ctx, schemaSQL); err != nil {
+		return fmt.Errorf("create schema: %w", err)
+	}
+
+	return nil
 }
