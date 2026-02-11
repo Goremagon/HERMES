@@ -18,6 +18,7 @@ const loading = ref(false)
 const pageError = ref('')
 
 const activeChannel = computed(() => channels.value.find((channel) => channel.id === chatStore.activeChannelId) || null)
+const showReconnectBanner = computed(() => !chatStore.connected && chatStore.reconnecting)
 
 async function loadChannels() {
   loading.value = true
@@ -136,6 +137,7 @@ onBeforeUnmount(() => {
       <VoiceRoom :channel-id="chatStore.activeChannelId || 0" />
 
       <button class="logout" @click="logout">Logout</button>
+      <p v-if="showReconnectBanner" class="warn">Reconnecting to realtime service...</p>
       <p v-if="pageError" class="error">{{ pageError }}</p>
       <p v-if="chatStore.error" class="error">{{ chatStore.error }}</p>
     </aside>
@@ -213,6 +215,10 @@ button {
 
 .logout {
   margin-top: auto;
+}
+
+.warn {
+  color: #fde68a;
 }
 
 .error {

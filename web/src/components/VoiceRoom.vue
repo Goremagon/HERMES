@@ -17,6 +17,7 @@ function setAudioRef(el, userId) {
     delete audioRefs.value[userId]
     return
   }
+
   audioRefs.value[userId] = el
   const stream = voiceStore.remoteStreams[userId]
   if (stream) {
@@ -66,15 +67,15 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="voice-room">
+  <section class="voice-room" :class="{ connected: voiceStore.isConnected }">
     <header>
       <h3>Voice</h3>
-      <p v-if="voiceStore.joinedChannelId">Connected</p>
-      <p v-else>Disconnected</p>
+      <p v-if="voiceStore.isConnected" class="state connected-text">Connected</p>
+      <p v-else class="state">Disconnected</p>
     </header>
 
     <div class="controls">
-      <button v-if="!voiceStore.joinedChannelId" :disabled="!channelId" @click="joinVoice">Join Voice</button>
+      <button v-if="!voiceStore.isConnected" :disabled="!channelId" @click="joinVoice">Join Voice</button>
       <template v-else>
         <button @click="voiceStore.toggleMute">{{ voiceStore.muted ? 'Unmute' : 'Mute' }}</button>
         <button @click="voiceStore.toggleDeafen">{{ voiceStore.deafened ? 'Undeafen' : 'Deafen' }}</button>
@@ -82,6 +83,7 @@ onBeforeUnmount(() => {
       </template>
     </div>
 
+    <p class="label">Connected Users</p>
     <ul>
       <li v-for="participant in voiceStore.participantList" :key="participant.id">{{ participant.username }}</li>
     </ul>
@@ -100,8 +102,22 @@ onBeforeUnmount(() => {
 <style scoped>
 .voice-room {
   border-top: 1px solid #374151;
+  border-left: 3px solid transparent;
   margin-top: 0.75rem;
   padding-top: 0.75rem;
+  padding-left: 0.5rem;
+}
+
+.voice-room.connected {
+  border-left-color: #22c55e;
+}
+
+.state {
+  color: #d1d5db;
+}
+
+.connected-text {
+  color: #86efac;
 }
 
 .controls {
@@ -109,6 +125,12 @@ onBeforeUnmount(() => {
   gap: 0.5rem;
   flex-wrap: wrap;
   margin-bottom: 0.5rem;
+}
+
+.label {
+  color: #d1d5db;
+  font-size: 0.85rem;
+  margin: 0.35rem 0;
 }
 
 ul {

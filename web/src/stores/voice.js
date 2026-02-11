@@ -16,7 +16,7 @@ export const useVoiceStore = defineStore('voice', {
     muted: false,
     deafened: false,
     error: '',
-    unsubscribeChatEvents: null,
+    beforeUnloadBound: false,
   }),
   getters: {
     remoteAudioEntries: (state) =>
@@ -26,19 +26,15 @@ export const useVoiceStore = defineStore('voice', {
         username: state.participants[userId] || `User ${userId}`,
       })),
     participantList: (state) => Object.entries(state.participants).map(([id, username]) => ({ id, username })),
+    isConnected: (state) => Boolean(state.joinedChannelId),
   },
   actions: {
     async initialize() {
-      if (this.unsubscribeChatEvents) {
+      if (this.beforeUnloadBound) {
         return
       }
-
-      const chatStore = useChatStore()
-      this.unsubscribeChatEvents = chatStore.registerEventHandler((payload) => {
-        this.handleRealtimeEvent(payload)
-      })
-
       window.addEventListener('beforeunload', this.handleBeforeUnload)
+      this.beforeUnloadBound = true
     },
     async joinRoom(channelId) {
       const chatStore = useChatStore()
@@ -68,6 +64,7 @@ export const useVoiceStore = defineStore('voice', {
 
       this.joinedChannelId = channelId
       this.participants[String(authStore.user.id)] = authStore.user.username
+
       chatStore.connect()
       chatStore.sendEvent({ type: 'join_voice', channel_id: channelId })
     },
@@ -101,11 +98,10 @@ export const useVoiceStore = defineStore('voice', {
     },
     teardown() {
       this.leaveRoom()
-      if (this.unsubscribeChatEvents) {
-        this.unsubscribeChatEvents()
-        this.unsubscribeChatEvents = null
+      if (this.beforeUnloadBound) {
+        window.removeEventListener('beforeunload', this.handleBeforeUnload)
+        this.beforeUnloadBound = false
       }
-      window.removeEventListener('beforeunload', this.handleBeforeUnload)
     },
     toggleMute() {
       if (!this.localStream) {

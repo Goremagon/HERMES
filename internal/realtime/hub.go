@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -16,7 +17,7 @@ import (
 )
 
 const (
-	maxMessageSize   = 2048
+	maxMessageSize   = 16 * 1024
 	messageHistLimit = 50
 )
 
@@ -163,6 +164,7 @@ func (h *Hub) markVoiceJoin(client *Client, channelID int64) error {
 		return fmt.Errorf("marshal user_joined_voice: %w", err)
 	}
 	h.broadcastToChannel(channelID, encoded)
+	log.Printf("user %d joined voice channel %d", client.user.ID, channelID)
 	return nil
 }
 
@@ -181,6 +183,7 @@ func (h *Hub) markVoiceLeave(client *Client, channelID int64) error {
 		return fmt.Errorf("marshal leave_voice: %w", err)
 	}
 	h.broadcastToChannel(channelID, encoded)
+	log.Printf("user %d left voice channel %d", client.user.ID, channelID)
 	return nil
 }
 
@@ -213,6 +216,7 @@ func (h *Hub) relaySignal(client *Client, evt inboundEvent) error {
 	}
 
 	h.broadcastToChannel(channelID, encoded)
+	log.Printf("signal relay from user %d to target %s on channel %d", client.user.ID, evt.TargetID, channelID)
 	return nil
 }
 

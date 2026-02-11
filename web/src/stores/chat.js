@@ -9,7 +9,7 @@ export const useChatStore = defineStore('chat', {
     messages: [],
     activeChannelId: null,
     error: '',
-    eventHandlers: [],
+    reconnecting: false,
   }),
   actions: {
     connect() {
@@ -17,10 +17,12 @@ export const useChatStore = defineStore('chat', {
         return
       }
 
+      this.reconnecting = true
       this.ws = new WebSocket(`${wsScheme}://${window.location.host}/api/ws`)
 
       this.ws.addEventListener('open', () => {
         this.connected = true
+        this.reconnecting = false
         this.error = ''
         if (this.activeChannelId) {
           this.joinChannel(this.activeChannelId)
@@ -29,9 +31,16 @@ export const useChatStore = defineStore('chat', {
 
       this.ws.addEventListener('close', () => {
         this.connected = false
+        this.reconnecting = true
       })
 
-      this.ws.addEventListener('message', (event) => {
+      this.ws.addEventListener('error', () => {
+        this.connected = false
+        this.reconnecting = true
+        this.error = 'WebSocket connection error'
+      })
+
+      this.ws.addEventListener('message', async (event) => {
         let payload
         try {
           payload = JSON.parse(event.data)
@@ -42,17 +51,26 @@ export const useChatStore = defineStore('chat', {
 
         if (payload.type === 'channel_history') {
           this.messages = payload.data?.messages || []
-        } else if (payload.type === 'new_message') {
+          return
+        }
+
+        if (payload.type === 'new_message') {
           if (payload.data?.channel_id === this.activeChannelId) {
             this.messages.push(payload.data)
           }
-        } else if (payload.type === 'error') {
-          this.error = payload.data?.message || 'Realtime error'
+          return
         }
 
-        this.eventHandlers.forEach((handler) => {
-          handler(payload)
-        })
+        if (payload.type === 'signal' || payload.type === 'user_joined_voice' || payload.type === 'leave_voice') {
+          const { useVoiceStore } = await import('./voice')
+          const voiceStore = useVoiceStore()
+          await voiceStore.handleRealtimeEvent(payload)
+          return
+        }
+
+        if (payload.type === 'error') {
+          this.error = payload.data?.message || 'Realtime error'
+        }
       })
     },
     disconnect() {
@@ -61,15 +79,9 @@ export const useChatStore = defineStore('chat', {
       }
       this.ws = null
       this.connected = false
+      this.reconnecting = false
       this.activeChannelId = null
       this.messages = []
-      this.eventHandlers = []
-    },
-    registerEventHandler(handler) {
-      this.eventHandlers.push(handler)
-      return () => {
-        this.eventHandlers = this.eventHandlers.filter((fn) => fn !== handler)
-      }
     },
     sendEvent(eventPayload) {
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
@@ -87,6 +99,7 @@ export const useChatStore = defineStore('chat', {
         this.connect()
         return
       }
+
       this.sendEvent({
         type: 'join_channel',
         channel_id: channelId,

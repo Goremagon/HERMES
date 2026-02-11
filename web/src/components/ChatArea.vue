@@ -32,14 +32,19 @@ function submitMessage() {
   draft.value = ''
 }
 
+async function scrollToBottom() {
+  await nextTick()
+  if (listRef.value) {
+    listRef.value.scrollTop = listRef.value.scrollHeight
+  }
+}
+
 watch(
   () => props.messages.length,
-  async () => {
-    await nextTick()
-    if (listRef.value) {
-      listRef.value.scrollTop = listRef.value.scrollHeight
-    }
+  () => {
+    scrollToBottom()
   },
+  { immediate: true },
 )
 </script>
 
