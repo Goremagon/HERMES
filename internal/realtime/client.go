@@ -2,7 +2,6 @@ package realtime
 
 import (
 	"encoding/json"
-	"log"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -12,15 +11,16 @@ const (
 	writeWait      = 10 * time.Second
 	pongWait       = 60 * time.Second
 	pingPeriod     = (pongWait * 9) / 10
-	maxPayloadSize = 2048
+	maxPayloadSize = 8 * 1024
 )
 
 type Client struct {
-	hub       *Hub
-	conn      *websocket.Conn
-	send      chan []byte
-	user      User
-	channelID int64
+	hub            *Hub
+	conn           *websocket.Conn
+	send           chan []byte
+	user           User
+	channelID      int64
+	voiceChannelID int64
 }
 
 func newClient(hub *Hub, conn *websocket.Conn, user User) *Client {
@@ -34,6 +34,9 @@ func newClient(hub *Hub, conn *websocket.Conn, user User) *Client {
 
 func (c *Client) readPump() {
 	defer func() {
+		if err := c.hub.markVoiceLeave(c, c.voiceChannelID); err != nil {
+			c.hub.sendError(c, "failed to leave voice")
+		}
 		c.hub.removeClient(c)
 		_ = c.conn.Close()
 	}()
@@ -86,6 +89,18 @@ func (c *Client) readPump() {
 				c.hub.sendError(c, err.Error())
 				continue
 			}
+		case "join_voice":
+			if err := c.hub.markVoiceJoin(c, evt.ChannelID); err != nil {
+				c.hub.sendError(c, err.Error())
+			}
+		case "leave_voice":
+			if err := c.hub.markVoiceLeave(c, evt.ChannelID); err != nil {
+				c.hub.sendError(c, err.Error())
+			}
+		case "signal":
+			if err := c.hub.relaySignal(c, evt); err != nil {
+				c.hub.sendError(c, err.Error())
+			}
 		default:
 			c.hub.sendError(c, "unsupported event type")
 		}
@@ -118,8 +133,4 @@ func (c *Client) writePump() {
 			}
 		}
 	}
-}
-
-func (c *Client) debugf(format string, args ...any) {
-	log.Printf("ws user=%d "+format, append([]any{c.user.ID}, args...)...)
 }

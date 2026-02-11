@@ -2,11 +2,14 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import ChatArea from '../components/ChatArea.vue'
+import VoiceRoom from '../components/VoiceRoom.vue'
 import { useAuthStore } from '../stores/auth'
 import { useChatStore } from '../stores/chat'
+import { useVoiceStore } from '../stores/voice'
 
 const authStore = useAuthStore()
 const chatStore = useChatStore()
+const voiceStore = useVoiceStore()
 const router = useRouter()
 
 const channels = ref([])
@@ -85,16 +88,19 @@ function sendMessage(content) {
 
 async function logout() {
   await authStore.logout()
+  voiceStore.teardown()
   chatStore.disconnect()
   await router.push('/login')
 }
 
 onMounted(async () => {
   chatStore.connect()
+  await voiceStore.initialize()
   await loadChannels()
 })
 
 onBeforeUnmount(() => {
+  voiceStore.teardown()
   chatStore.disconnect()
 })
 </script>
@@ -126,6 +132,8 @@ onBeforeUnmount(() => {
         <input id="channel-name" v-model="channelName" maxlength="30" required placeholder="General" />
         <button type="submit">Create</button>
       </form>
+
+      <VoiceRoom :channel-id="chatStore.activeChannelId || 0" />
 
       <button class="logout" @click="logout">Logout</button>
       <p v-if="pageError" class="error">{{ pageError }}</p>

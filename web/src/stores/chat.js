@@ -9,6 +9,7 @@ export const useChatStore = defineStore('chat', {
     messages: [],
     activeChannelId: null,
     error: '',
+    eventHandlers: [],
   }),
   actions: {
     connect() {
@@ -41,19 +42,17 @@ export const useChatStore = defineStore('chat', {
 
         if (payload.type === 'channel_history') {
           this.messages = payload.data?.messages || []
-          return
-        }
-
-        if (payload.type === 'new_message') {
+        } else if (payload.type === 'new_message') {
           if (payload.data?.channel_id === this.activeChannelId) {
             this.messages.push(payload.data)
           }
-          return
-        }
-
-        if (payload.type === 'error') {
+        } else if (payload.type === 'error') {
           this.error = payload.data?.message || 'Realtime error'
         }
+
+        this.eventHandlers.forEach((handler) => {
+          handler(payload)
+        })
       })
     },
     disconnect() {
@@ -64,6 +63,22 @@ export const useChatStore = defineStore('chat', {
       this.connected = false
       this.activeChannelId = null
       this.messages = []
+      this.eventHandlers = []
+    },
+    registerEventHandler(handler) {
+      this.eventHandlers.push(handler)
+      return () => {
+        this.eventHandlers = this.eventHandlers.filter((fn) => fn !== handler)
+      }
+    },
+    sendEvent(eventPayload) {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        this.error = 'Not connected to realtime service'
+        return false
+      }
+
+      this.ws.send(JSON.stringify(eventPayload))
+      return true
     },
     joinChannel(channelId) {
       this.activeChannelId = channelId
@@ -72,26 +87,22 @@ export const useChatStore = defineStore('chat', {
         this.connect()
         return
       }
-      this.ws.send(
-        JSON.stringify({
-          type: 'join_channel',
-          channel_id: channelId,
-        }),
-      )
+      this.sendEvent({
+        type: 'join_channel',
+        channel_id: channelId,
+      })
     },
     sendMessage(content) {
-      if (!this.activeChannelId || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
-        this.error = 'Not connected to chat'
+      if (!this.activeChannelId) {
+        this.error = 'No active channel selected'
         return
       }
 
-      this.ws.send(
-        JSON.stringify({
-          type: 'send_message',
-          channel_id: this.activeChannelId,
-          content,
-        }),
-      )
+      this.sendEvent({
+        type: 'send_message',
+        channel_id: this.activeChannelId,
+        content,
+      })
     },
   },
 })

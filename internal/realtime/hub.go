@@ -34,9 +34,11 @@ type User struct {
 }
 
 type inboundEvent struct {
-	Type      string `json:"type"`
-	ChannelID int64  `json:"channel_id"`
-	Content   string `json:"content"`
+	Type      string          `json:"type"`
+	ChannelID int64           `json:"channel_id"`
+	Content   string          `json:"content"`
+	TargetID  string          `json:"target_id"`
+	Payload   json.RawMessage `json:"payload"`
 }
 
 type outboundEvent struct {
@@ -47,6 +49,20 @@ type outboundEvent struct {
 type channelHistoryData struct {
 	ChannelID int64              `json:"channel_id"`
 	Messages  []database.Message `json:"messages"`
+}
+
+type signalData struct {
+	FromUserID int64           `json:"from_user_id"`
+	FromName   string          `json:"from_name"`
+	TargetID   string          `json:"target_id"`
+	ChannelID  int64           `json:"channel_id"`
+	Payload    json.RawMessage `json:"payload"`
+}
+
+type voicePresenceData struct {
+	UserID    int64  `json:"user_id"`
+	Username  string `json:"username"`
+	ChannelID int64  `json:"channel_id"`
 }
 
 func NewHub(db *sql.DB) *Hub {
@@ -132,6 +148,71 @@ func (h *Hub) joinChannel(client *Client, channelID int64) error {
 	h.channels[channelID][client] = struct{}{}
 	client.channelID = channelID
 
+	return nil
+}
+
+func (h *Hub) markVoiceJoin(client *Client, channelID int64) error {
+	if err := h.joinChannel(client, channelID); err != nil {
+		return err
+	}
+
+	client.voiceChannelID = channelID
+	presence := voicePresenceData{UserID: client.user.ID, Username: client.user.Username, ChannelID: channelID}
+	encoded, err := json.Marshal(outboundEvent{Type: "user_joined_voice", Data: presence})
+	if err != nil {
+		return fmt.Errorf("marshal user_joined_voice: %w", err)
+	}
+	h.broadcastToChannel(channelID, encoded)
+	return nil
+}
+
+func (h *Hub) markVoiceLeave(client *Client, channelID int64) error {
+	if channelID <= 0 {
+		channelID = client.voiceChannelID
+	}
+	if channelID <= 0 {
+		return nil
+	}
+
+	client.voiceChannelID = 0
+	presence := voicePresenceData{UserID: client.user.ID, Username: client.user.Username, ChannelID: channelID}
+	encoded, err := json.Marshal(outboundEvent{Type: "leave_voice", Data: presence})
+	if err != nil {
+		return fmt.Errorf("marshal leave_voice: %w", err)
+	}
+	h.broadcastToChannel(channelID, encoded)
+	return nil
+}
+
+func (h *Hub) relaySignal(client *Client, evt inboundEvent) error {
+	channelID := evt.ChannelID
+	if channelID <= 0 {
+		channelID = client.voiceChannelID
+	}
+	if channelID <= 0 {
+		channelID = client.channelID
+	}
+	if channelID <= 0 {
+		return fmt.Errorf("channel is required for signal")
+	}
+
+	if len(evt.Payload) == 0 {
+		return fmt.Errorf("signal payload is required")
+	}
+
+	msg := outboundEvent{Type: "signal", Data: signalData{
+		FromUserID: client.user.ID,
+		FromName:   client.user.Username,
+		TargetID:   evt.TargetID,
+		ChannelID:  channelID,
+		Payload:    evt.Payload,
+	}}
+	encoded, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("marshal signal: %w", err)
+	}
+
+	h.broadcastToChannel(channelID, encoded)
 	return nil
 }
 
