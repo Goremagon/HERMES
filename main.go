@@ -16,6 +16,7 @@ import (
 
 	"openvoice/internal/auth"
 	"openvoice/internal/database"
+	"openvoice/internal/realtime"
 )
 
 const (
@@ -61,7 +62,8 @@ type createChannelRequest struct {
 }
 
 type application struct {
-	db *sql.DB
+	db  *sql.DB
+	hub *realtime.Hub
 }
 
 func main() {
@@ -76,7 +78,7 @@ func main() {
 		log.Fatalf("frontend assets unavailable: %v", err)
 	}
 
-	a := &application{db: db}
+	a := &application{db: db, hub: realtime.NewHub(db)}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", a.handleHealth)
@@ -85,6 +87,7 @@ func main() {
 	mux.HandleFunc("/api/logout", a.handleLogout)
 	mux.HandleFunc("/api/me", a.handleMe)
 	mux.Handle("/api/channels", a.authMiddleware(http.HandlerFunc(a.handleChannels)))
+	mux.Handle("/api/ws", a.authMiddleware(http.HandlerFunc(a.handleWebSocket)))
 	mux.Handle("/", spaHandler(distFS))
 
 	srv := &http.Server{
@@ -254,6 +257,23 @@ func (a *application) handleMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, meResponse{User: user})
 }
 
+func (a *application) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return
+	}
+
+	user, err := a.userFromRequest(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	if err := a.hub.ServeWS(w, r, realtime.User{ID: user.ID, Username: user.Username}); err != nil {
+		log.Printf("websocket handshake failed: %v", err)
+	}
+}
+
 func (a *application) handleChannels(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -352,33 +372,12 @@ func (a *application) userFromRequest(r *http.Request) (User, error) {
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
 
-	var (
-		user      User
-		expiresAt string
-	)
-	err = a.db.QueryRowContext(
-		ctx,
-		`SELECT users.id, users.username, sessions.expires_at
-		 FROM sessions
-		 JOIN users ON users.id = sessions.user_id
-		 WHERE sessions.token = ?`,
-		cookie.Value,
-	).Scan(&user.ID, &user.Username, &expiresAt)
+	session, err := auth.GetSession(ctx, a.db, cookie.Value)
 	if err != nil {
-		return User{}, fmt.Errorf("lookup session: %w", err)
+		return User{}, fmt.Errorf("get session: %w", err)
 	}
 
-	expiry, err := time.Parse(time.RFC3339, expiresAt)
-	if err != nil {
-		_, _ = a.db.ExecContext(ctx, `DELETE FROM sessions WHERE token = ?`, cookie.Value)
-		return User{}, fmt.Errorf("parse session expiry: %w", err)
-	}
-	if time.Now().UTC().After(expiry) {
-		_, _ = a.db.ExecContext(ctx, `DELETE FROM sessions WHERE token = ?`, cookie.Value)
-		return User{}, fmt.Errorf("session expired")
-	}
-
-	return user, nil
+	return User{ID: session.UserID, Username: session.Username}, nil
 }
 
 func setSessionCookie(w http.ResponseWriter, token string, expiresAt time.Time) {

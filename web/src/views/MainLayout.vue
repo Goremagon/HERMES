@@ -1,15 +1,20 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import ChatArea from '../components/ChatArea.vue'
 import { useAuthStore } from '../stores/auth'
+import { useChatStore } from '../stores/chat'
 
 const authStore = useAuthStore()
+const chatStore = useChatStore()
 const router = useRouter()
 
 const channels = ref([])
 const channelName = ref('')
 const loading = ref(false)
 const pageError = ref('')
+
+const activeChannel = computed(() => channels.value.find((channel) => channel.id === chatStore.activeChannelId) || null)
 
 async function loadChannels() {
   loading.value = true
@@ -31,11 +36,19 @@ async function loadChannels() {
     }
 
     channels.value = payload.channels
+
+    if (channels.value.length > 0 && !chatStore.activeChannelId) {
+      selectChannel(channels.value[0].id)
+    }
   } catch (error) {
     pageError.value = error.message || 'Failed to load channels'
   } finally {
     loading.value = false
   }
+}
+
+function selectChannel(channelId) {
+  chatStore.joinChannel(channelId)
 }
 
 async function createChannel() {
@@ -60,17 +73,30 @@ async function createChannel() {
 
     channels.value.push(payload.channel)
     channelName.value = ''
+    selectChannel(payload.channel.id)
   } catch (error) {
     pageError.value = error.message || 'Failed to create channel'
   }
 }
 
+function sendMessage(content) {
+  chatStore.sendMessage(content)
+}
+
 async function logout() {
   await authStore.logout()
+  chatStore.disconnect()
   await router.push('/login')
 }
 
-onMounted(loadChannels)
+onMounted(async () => {
+  chatStore.connect()
+  await loadChannels()
+})
+
+onBeforeUnmount(() => {
+  chatStore.disconnect()
+})
 </script>
 
 <template>
@@ -84,7 +110,13 @@ onMounted(loadChannels)
       <section>
         <h3>Channels</h3>
         <ul>
-          <li v-for="channel in channels" :key="channel.id"># {{ channel.name }}</li>
+          <li
+            v-for="channel in channels"
+            :key="channel.id"
+            :class="{ active: channel.id === chatStore.activeChannelId }"
+          >
+            <button type="button" @click="selectChannel(channel.id)"># {{ channel.name }}</button>
+          </li>
           <li v-if="!loading && channels.length === 0">No channels yet.</li>
         </ul>
       </section>
@@ -97,12 +129,15 @@ onMounted(loadChannels)
 
       <button class="logout" @click="logout">Logout</button>
       <p v-if="pageError" class="error">{{ pageError }}</p>
+      <p v-if="chatStore.error" class="error">{{ chatStore.error }}</p>
     </aside>
 
-    <section class="content">
-      <h1>Dashboard</h1>
-      <p>Select a channel from the sidebar to continue.</p>
-    </section>
+    <ChatArea
+      :channel-name="activeChannel?.name || ''"
+      :messages="chatStore.messages"
+      :disabled="!chatStore.activeChannelId || !chatStore.connected"
+      @send="sendMessage"
+    />
   </main>
 </template>
 
@@ -135,6 +170,17 @@ ul {
   gap: 0.4rem;
 }
 
+li button {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: #f9fafb;
+}
+
+li.active button {
+  background: #312e81;
+}
+
 .channel-create {
   display: flex;
   flex-direction: column;
@@ -159,11 +205,6 @@ button {
 
 .logout {
   margin-top: auto;
-}
-
-.content {
-  background: #f3f4f6;
-  padding: 2rem;
 }
 
 .error {

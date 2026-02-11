@@ -28,3 +28,4 @@ Server starts on `http://localhost:8080`.
 - `GET /api/me`
 - `GET /api/channels` (auth required)
 - `POST /api/channels` (auth required)
+- `GET /api/ws` (auth required, WebSocket)
