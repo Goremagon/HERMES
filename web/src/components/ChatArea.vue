@@ -20,6 +20,8 @@ const emit = defineEmits(['send'])
 
 const draft = ref('')
 const listRef = ref(null)
+const fileInputRef = ref(null)
+const uploadError = ref('')
 
 const canSend = computed(() => !props.disabled && draft.value.trim().length > 0)
 
@@ -46,6 +48,62 @@ watch(
   },
   { immediate: true },
 )
+
+function openFilePicker() {
+  uploadError.value = ''
+  fileInputRef.value?.click()
+}
+
+async function uploadFile(event) {
+  uploadError.value = ''
+  const file = event.target.files?.[0]
+  if (!file) {
+    return
+  }
+
+  const formData = new FormData()
+  formData.append('file', file)
+
+  try {
+    const response = await fetch('/api/upload', {
+      method: 'POST',
+      credentials: 'include',
+      body: formData,
+    })
+
+    const payload = await response.json()
+    if (!response.ok) {
+      throw new Error(payload.error || 'Upload failed')
+    }
+
+    draft.value = `${draft.value}${draft.value ? ' ' : ''}![img](${payload.url})`
+  } catch (error) {
+    uploadError.value = error.message || 'Upload failed'
+  } finally {
+    event.target.value = ''
+  }
+}
+
+function parseMessageContent(content) {
+  const imagePattern = /!\[[^\]]*\]\(([^)]+)\)/g
+  const parts = []
+  let lastIndex = 0
+  let match
+
+  while ((match = imagePattern.exec(content)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push({ type: 'text', value: content.slice(lastIndex, match.index) })
+    }
+    parts.push({ type: 'image', value: match[1] })
+    lastIndex = imagePattern.lastIndex
+  }
+
+  if (lastIndex < content.length) {
+    parts.push({ type: 'text', value: content.slice(lastIndex) })
+  }
+
+  return parts.length > 0 ? parts : [{ type: 'text', value: content }]
+}
 </script>
 
 <template>
@@ -59,11 +117,16 @@ watch(
       <p v-if="messages.length === 0" class="empty">No messages yet.</p>
       <article v-for="message in messages" :key="message.id" class="message-item">
         <span class="author">{{ message.username }}</span>
-        <span class="content">{{ message.content }}</span>
+        <template v-for="(part, index) in parseMessageContent(message.content)" :key="`${message.id}-${index}`">
+          <span v-if="part.type === 'text'" class="content">{{ part.value }}</span>
+          <img v-else class="attachment" :src="part.value" alt="attachment" />
+        </template>
       </article>
     </div>
 
     <form class="composer" @submit.prevent="submitMessage">
+      <button type="button" class="clip" :disabled="disabled" @click="openFilePicker">📎</button>
+      <input ref="fileInputRef" type="file" class="hidden" accept=".jpg,.jpeg,.png,.gif,.webm" @change="uploadFile" />
       <input
         v-model="draft"
         :disabled="disabled"
@@ -73,6 +136,7 @@ watch(
       />
       <button type="submit" :disabled="!canSend">Send</button>
     </form>
+    <p v-if="uploadError" class="error">{{ uploadError }}</p>
   </section>
 </template>
 
@@ -102,6 +166,9 @@ header {
   border-radius: 8px;
   border: 1px solid #e5e7eb;
   padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
 }
 
 .author {
@@ -118,6 +185,14 @@ header {
   padding: 0.75rem;
   display: flex;
   gap: 0.5rem;
+}
+
+.hidden {
+  display: none;
+}
+
+.clip {
+  padding: 0.6rem 0.8rem;
 }
 
 input {
@@ -138,5 +213,16 @@ button {
 
 button:disabled {
   opacity: 0.5;
+}
+
+.attachment {
+  max-width: 280px;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+}
+
+.error {
+  color: #dc2626;
+  padding: 0 0.75rem 0.5rem;
 }
 </style>

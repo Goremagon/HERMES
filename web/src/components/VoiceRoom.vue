@@ -10,15 +10,16 @@ const props = defineProps({
 })
 
 const voiceStore = useVoiceStore()
-const audioRefs = ref({})
+const mediaRefs = ref({})
+const localVideoRef = ref(null)
 
-function setAudioRef(el, userId) {
+function setMediaRef(el, userId) {
   if (!el) {
-    delete audioRefs.value[userId]
+    delete mediaRefs.value[userId]
     return
   }
 
-  audioRefs.value[userId] = el
+  mediaRefs.value[userId] = el
   const stream = voiceStore.remoteStreams[userId]
   if (stream) {
     el.srcObject = stream
@@ -27,11 +28,22 @@ function setAudioRef(el, userId) {
 }
 
 watch(
-  () => voiceStore.remoteAudioEntries,
+  () => voiceStore.localStream,
   async () => {
     await nextTick()
-    voiceStore.remoteAudioEntries.forEach((entry) => {
-      const el = audioRefs.value[entry.userId]
+    if (localVideoRef.value) {
+      localVideoRef.value.srcObject = voiceStore.localStream
+      localVideoRef.value.muted = true
+    }
+  },
+)
+
+watch(
+  () => voiceStore.remoteMediaEntries,
+  async () => {
+    await nextTick()
+    voiceStore.remoteMediaEntries.forEach((entry) => {
+      const el = mediaRefs.value[entry.userId]
       if (el) {
         el.srcObject = entry.stream
         el.muted = voiceStore.deafened
@@ -44,7 +56,7 @@ watch(
 watch(
   () => voiceStore.deafened,
   () => {
-    Object.values(audioRefs.value).forEach((el) => {
+    Object.values(mediaRefs.value).forEach((el) => {
       el.muted = voiceStore.deafened
     })
   },
@@ -78,6 +90,7 @@ onBeforeUnmount(() => {
       <button v-if="!voiceStore.isConnected" :disabled="!channelId" @click="joinVoice">Join Voice</button>
       <template v-else>
         <button @click="voiceStore.toggleMute">{{ voiceStore.muted ? 'Unmute' : 'Mute' }}</button>
+        <button @click="voiceStore.toggleCamera">{{ voiceStore.cameraOff ? 'Camera On' : 'Camera Off' }}</button>
         <button @click="voiceStore.toggleDeafen">{{ voiceStore.deafened ? 'Undeafen' : 'Deafen' }}</button>
         <button @click="leaveVoice">Leave</button>
       </template>
@@ -88,12 +101,17 @@ onBeforeUnmount(() => {
       <li v-for="participant in voiceStore.participantList" :key="participant.id">{{ participant.username }}</li>
     </ul>
 
-    <audio
-      v-for="entry in voiceStore.remoteAudioEntries"
-      :key="entry.userId"
-      autoplay
-      :ref="(el) => setAudioRef(el, entry.userId)"
-    />
+    <div class="video-grid">
+      <video v-if="voiceStore.localStream" ref="localVideoRef" autoplay playsinline muted class="video-card local" />
+      <video
+        v-for="entry in voiceStore.remoteMediaEntries"
+        :key="entry.userId"
+        autoplay
+        playsinline
+        :ref="(el) => setMediaRef(el, entry.userId)"
+        class="video-card"
+      />
+    </div>
 
     <p v-if="voiceStore.error" class="error">{{ voiceStore.error }}</p>
   </section>
@@ -140,6 +158,24 @@ ul {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+}
+
+.video-grid {
+  margin-top: 0.6rem;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.video-card {
+  width: 100%;
+  border-radius: 8px;
+  background: #000;
+  min-height: 80px;
+}
+
+.video-card.local {
+  border: 2px solid #22c55e;
 }
 
 .error {

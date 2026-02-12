@@ -15,11 +15,12 @@ export const useVoiceStore = defineStore('voice', {
     joinedChannelId: null,
     muted: false,
     deafened: false,
+    cameraOff: false,
     error: '',
     beforeUnloadBound: false,
   }),
   getters: {
-    remoteAudioEntries: (state) =>
+    remoteMediaEntries: (state) =>
       Object.entries(state.remoteStreams).map(([userId, stream]) => ({
         userId,
         stream,
@@ -51,9 +52,9 @@ export const useVoiceStore = defineStore('voice', {
 
       if (!this.localStream) {
         try {
-          this.localStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+          this.localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true })
         } catch (error) {
-          this.error = error.message || 'Microphone access denied'
+          this.error = error.message || 'Microphone/Camera access denied'
           return
         }
       }
@@ -91,6 +92,7 @@ export const useVoiceStore = defineStore('voice', {
       this.joinedChannelId = null
       this.muted = false
       this.deafened = false
+      this.cameraOff = false
 
       if (authStore.user) {
         this.participants[String(authStore.user.id)] = authStore.user.username
@@ -111,6 +113,16 @@ export const useVoiceStore = defineStore('voice', {
       this.muted = !this.muted
       this.localStream.getAudioTracks().forEach((track) => {
         track.enabled = !this.muted
+      })
+    },
+    toggleCamera() {
+      if (!this.localStream) {
+        return
+      }
+
+      this.cameraOff = !this.cameraOff
+      this.localStream.getVideoTracks().forEach((track) => {
+        track.enabled = !this.cameraOff
       })
     },
     toggleDeafen() {

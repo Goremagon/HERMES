@@ -2,14 +2,18 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -27,6 +31,8 @@ const (
 	sessionDuration     = 24 * time.Hour
 	requestTimeout      = 3 * time.Second
 	minimumPasswordSize = 8
+	maxUploadSize       = 10 << 20
+	uploadDir           = "uploads"
 )
 
 var (
@@ -73,6 +79,10 @@ func main() {
 	}
 	defer db.Close()
 
+	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
+		log.Fatalf("create uploads directory: %v", err)
+	}
+
 	distFS, err := fs.Sub(embeddedDist, embedPath)
 	if err != nil {
 		log.Fatalf("frontend assets unavailable: %v", err)
@@ -88,6 +98,8 @@ func main() {
 	mux.HandleFunc("/api/me", a.handleMe)
 	mux.Handle("/api/channels", a.authMiddleware(http.HandlerFunc(a.handleChannels)))
 	mux.Handle("/api/ws", a.authMiddleware(http.HandlerFunc(a.handleWebSocket)))
+	mux.Handle("/api/upload", a.authMiddleware(http.HandlerFunc(a.handleUpload)))
+	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadDir))))
 	mux.Handle("/", spaHandler(distFS))
 
 	srv := &http.Server{
@@ -274,6 +286,60 @@ func (a *application) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (a *application) handleUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid upload payload"})
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "file is required"})
+		return
+	}
+	defer file.Close()
+
+	if header.Size > maxUploadSize {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "file too large (max 10MB)"})
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	allowed := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".webm": true}
+	if !allowed[ext] {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported file type"})
+		return
+	}
+
+	randBytes := make([]byte, 6)
+	if _, err := rand.Read(randBytes); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to generate file name"})
+		return
+	}
+	filename := fmt.Sprintf("%d-%x%s", time.Now().UnixNano(), randBytes, ext)
+	path := filepath.Join(uploadDir, filename)
+
+	out, err := os.Create(path)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save upload"})
+		return
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, file); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to write upload"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"url": "/uploads/" + filename})
+}
+
 func (a *application) handleChannels(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -450,7 +516,7 @@ func spaHandler(staticFS fs.FS) http.Handler {
 	fileServer := http.FileServer(http.FS(staticFS))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/") {
+		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/uploads/") {
 			http.NotFound(w, r)
 			return
 		}
