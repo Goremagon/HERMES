@@ -6,14 +6,17 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"net/http"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
 
 const (
-	PasswordCost     = 10
-	SessionTokenSize = 32
+	PasswordCost          = 10
+	SessionTokenSize      = 32
+	SessionCookieSecure   = false
+	SessionCookieSameSite = http.SameSiteLaxMode
 )
 
 type RegisterRequest struct {
