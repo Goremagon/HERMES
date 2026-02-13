@@ -16,6 +16,11 @@ export const useVoiceStore = defineStore('voice', {
     muted: false,
     deafened: false,
     cameraOff: false,
+    audioInputs: [],
+    videoInputs: [],
+    selectedAudioInputId: localStorage.getItem('openvoice.audioInputId') || '',
+    selectedVideoInputId: localStorage.getItem('openvoice.videoInputId') || '',
+    peerVolumes: {},
     error: '',
     beforeUnloadBound: false,
   }),
@@ -52,7 +57,9 @@ export const useVoiceStore = defineStore('voice', {
 
       if (!this.localStream) {
         try {
-          this.localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true })
+          const audioConstraint = this.selectedAudioInputId ? { deviceId: { exact: this.selectedAudioInputId } } : true
+          const videoConstraint = this.selectedVideoInputId ? { deviceId: { exact: this.selectedVideoInputId } } : true
+          this.localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint, video: videoConstraint })
         } catch (error) {
           this.error = error.message || 'Microphone/Camera access denied'
           return
@@ -127,6 +134,26 @@ export const useVoiceStore = defineStore('voice', {
     },
     toggleDeafen() {
       this.deafened = !this.deafened
+    },
+
+    async listDevices() {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices()
+        this.audioInputs = devices.filter((d) => d.kind === 'audioinput')
+        this.videoInputs = devices.filter((d) => d.kind === 'videoinput')
+      } catch (error) {
+        this.error = error.message || 'Failed to load media devices'
+      }
+    },
+    savePreferences() {
+      localStorage.setItem('openvoice.audioInputId', this.selectedAudioInputId || '')
+      localStorage.setItem('openvoice.videoInputId', this.selectedVideoInputId || '')
+    },
+    setPeerVolume(userId, volume) {
+      this.peerVolumes[userId] = volume
+    },
+    getPeerVolume(userId) {
+      return this.peerVolumes[userId] ?? 1
     },
     async handleRealtimeEvent(payload) {
       const authStore = useAuthStore()

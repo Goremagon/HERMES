@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -18,6 +19,7 @@ type Message struct {
 	ChannelID int64     `json:"channel_id"`
 	UserID    int64     `json:"user_id"`
 	Username  string    `json:"username"`
+	AvatarURL string    `json:"avatar_url"`
 	Content   string    `json:"content"`
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -85,7 +87,7 @@ func GetMessages(ctx context.Context, db *sql.DB, channelID int64, limit int) ([
 	}
 
 	rows, err := db.QueryContext(ctx, `
-SELECT m.id, m.channel_id, m.user_id, u.username, m.content, m.created_at
+SELECT m.id, m.channel_id, m.user_id, u.username, COALESCE(u.avatar_url, ''), m.content, m.created_at
 FROM messages m
 JOIN users u ON u.id = m.user_id
 WHERE m.channel_id = ?
@@ -99,7 +101,7 @@ LIMIT ?`, channelID, limit)
 	messages := make([]Message, 0, limit)
 	for rows.Next() {
 		var msg Message
-		if err := rows.Scan(&msg.ID, &msg.ChannelID, &msg.UserID, &msg.Username, &msg.Content, &msg.CreatedAt); err != nil {
+		if err := rows.Scan(&msg.ID, &msg.ChannelID, &msg.UserID, &msg.Username, &msg.AvatarURL, &msg.Content, &msg.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
 		messages = append(messages, msg)
@@ -119,10 +121,10 @@ LIMIT ?`, channelID, limit)
 func getMessageByID(ctx context.Context, db *sql.DB, id int64) (Message, error) {
 	var msg Message
 	err := db.QueryRowContext(ctx, `
-SELECT m.id, m.channel_id, m.user_id, u.username, m.content, m.created_at
+SELECT m.id, m.channel_id, m.user_id, u.username, COALESCE(u.avatar_url, ''), m.content, m.created_at
 FROM messages m
 JOIN users u ON u.id = m.user_id
-WHERE m.id = ?`, id).Scan(&msg.ID, &msg.ChannelID, &msg.UserID, &msg.Username, &msg.Content, &msg.CreatedAt)
+WHERE m.id = ?`, id).Scan(&msg.ID, &msg.ChannelID, &msg.UserID, &msg.Username, &msg.AvatarURL, &msg.Content, &msg.CreatedAt)
 	if err != nil {
 		return Message{}, fmt.Errorf("fetch message: %w", err)
 	}
@@ -135,6 +137,7 @@ CREATE TABLE IF NOT EXISTS users (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	username TEXT NOT NULL UNIQUE,
 	password_hash TEXT NOT NULL,
+	avatar_url TEXT NOT NULL DEFAULT '',
 	created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -166,6 +169,49 @@ CREATE TABLE IF NOT EXISTS messages (
 
 	if _, err := db.ExecContext(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("create schema: %w", err)
+	}
+
+	if err := ensureUserAvatarColumn(ctx, db); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func ensureUserAvatarColumn(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, `PRAGMA table_info(users)`) 
+	if err != nil {
+		return fmt.Errorf("inspect users table: %w", err)
+	}
+	defer rows.Close()
+
+	hasAvatar := false
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			typeName  string
+			notNull   int
+			defaultV  sql.NullString
+			primaryID int
+		)
+		if err := rows.Scan(&cid, &name, &typeName, &notNull, &defaultV, &primaryID); err != nil {
+			return fmt.Errorf("scan users pragma: %w", err)
+		}
+		if strings.EqualFold(name, "avatar_url") {
+			hasAvatar = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate users pragma: %w", err)
+	}
+
+	if hasAvatar {
+		return nil
+	}
+
+	if _, err := db.ExecContext(ctx, `ALTER TABLE users ADD COLUMN avatar_url TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("add avatar_url column: %w", err)
 	}
 
 	return nil

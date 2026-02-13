@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import ChatArea from '../components/ChatArea.vue'
 import VoiceRoom from '../components/VoiceRoom.vue'
+import MemberList from '../components/MemberList.vue'
 import { useAuthStore } from '../stores/auth'
 import { useChatStore } from '../stores/chat'
 import { useVoiceStore } from '../stores/voice'
@@ -87,6 +88,10 @@ function sendMessage(content) {
   chatStore.sendMessage(content)
 }
 
+function openSettings() {
+  router.push('/settings')
+}
+
 async function logout() {
   await authStore.logout()
   voiceStore.teardown()
@@ -111,7 +116,10 @@ onBeforeUnmount(() => {
     <aside class="sidebar">
       <div class="sidebar-header">
         <h2>OpenVoice</h2>
-        <p v-if="authStore.user">@{{ authStore.user.username }}</p>
+        <div class="me">
+          <img v-if="authStore.user?.avatar_url" :src="authStore.user.avatar_url" class="avatar" alt="avatar" />
+          <p v-if="authStore.user">@{{ authStore.user.username }}</p>
+        </div>
       </div>
 
       <section>
@@ -136,6 +144,7 @@ onBeforeUnmount(() => {
 
       <VoiceRoom :channel-id="chatStore.activeChannelId || 0" />
 
+      <button class="settings" @click="openSettings">Settings</button>
       <button class="logout" @click="logout">Logout</button>
       <p v-if="showReconnectBanner" class="warn">Reconnecting to realtime service...</p>
       <p v-if="pageError" class="error">{{ pageError }}</p>
@@ -148,6 +157,8 @@ onBeforeUnmount(() => {
       :disabled="!chatStore.activeChannelId || !chatStore.connected"
       @send="sendMessage"
     />
+
+    <MemberList />
   </main>
 </template>
 
@@ -155,7 +166,7 @@ onBeforeUnmount(() => {
 .dashboard-layout {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: 280px 1fr 240px;
 }
 
 .sidebar {
@@ -165,6 +176,19 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+
+.me {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  object-fit: cover;
 }
 
 .sidebar-header p {
@@ -213,7 +237,7 @@ button {
   cursor: pointer;
 }
 
-.logout {
+.settings {
   margin-top: auto;
 }
 
@@ -223,5 +247,11 @@ button {
 
 .error {
   color: #fecaca;
+}
+
+@media (max-width: 900px) {
+  .dashboard-layout {
+    grid-template-columns: 280px 1fr;
+  }
 }
 </style>

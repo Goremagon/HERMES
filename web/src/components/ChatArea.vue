@@ -116,7 +116,11 @@ function parseMessageContent(content) {
     <div ref="listRef" class="message-list">
       <p v-if="messages.length === 0" class="empty">No messages yet.</p>
       <article v-for="message in messages" :key="message.id" class="message-item">
-        <span class="author">{{ message.username }}</span>
+        <div class="header">
+          <img v-if="message.avatar_url" :src="message.avatar_url" class="avatar" alt="avatar" />
+          <div v-else class="avatar placeholder">{{ (message.username || "?").slice(0,1).toUpperCase() }}</div>
+          <span class="author">{{ message.username }}</span>
+        </div>
         <template v-for="(part, index) in parseMessageContent(message.content)" :key="`${message.id}-${index}`">
           <span v-if="part.type === 'text'" class="content">{{ part.value }}</span>
           <img v-else class="attachment" :src="part.value" alt="attachment" />
@@ -169,6 +173,29 @@ header {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  object-fit: cover;
+}
+
+.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #475569;
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
 }
 
 .author {

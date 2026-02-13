@@ -44,8 +44,9 @@ var (
 var embeddedDist embed.FS
 
 type User struct {
-	ID       int64  `json:"id"`
-	Username string `json:"username"`
+	ID        int64  `json:"id"`
+	Username  string `json:"username"`
+	AvatarURL string `json:"avatar_url"`
 }
 
 type channel struct {
@@ -65,6 +66,18 @@ type channelsResponse struct {
 type createChannelRequest struct {
 	Name string `json:"name"`
 	Type string `json:"type"`
+}
+
+type updateProfileRequest struct {
+	Username  string `json:"username"`
+	AvatarURL string `json:"avatar_url"`
+}
+
+type publicUser struct {
+	ID        int64  `json:"id"`
+	Username  string `json:"username"`
+	AvatarURL string `json:"avatar_url"`
+	Online    bool   `json:"online"`
 }
 
 type application struct {
@@ -96,6 +109,7 @@ func main() {
 	mux.HandleFunc("/api/login", a.handleLogin)
 	mux.HandleFunc("/api/logout", a.handleLogout)
 	mux.HandleFunc("/api/me", a.handleMe)
+	mux.Handle("/api/users", a.authMiddleware(http.HandlerFunc(a.handleListUsers)))
 	mux.Handle("/api/channels", a.authMiddleware(http.HandlerFunc(a.handleChannels)))
 	mux.Handle("/api/ws", a.authMiddleware(http.HandlerFunc(a.handleWebSocket)))
 	mux.Handle("/api/upload", a.authMiddleware(http.HandlerFunc(a.handleUpload)))
@@ -180,7 +194,7 @@ func (a *application) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]any{"user": User{ID: id, Username: req.Username}})
+	writeJSON(w, http.StatusCreated, map[string]any{"user": User{ID: id, Username: req.Username, AvatarURL: ""}})
 }
 
 func (a *application) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -206,7 +220,7 @@ func (a *application) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	var user User
 	var passwordHash string
-	err := a.db.QueryRowContext(ctx, `SELECT id, username, password_hash FROM users WHERE username = ?`, req.Username).Scan(&user.ID, &user.Username, &passwordHash)
+	err := a.db.QueryRowContext(ctx, `SELECT id, username, COALESCE(avatar_url, ''), password_hash FROM users WHERE username = ?`, req.Username).Scan(&user.ID, &user.Username, &user.AvatarURL, &passwordHash)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
@@ -255,18 +269,94 @@ func (a *application) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *application) handleMe(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
+		user, err := a.userFromRequest(r)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
+		writeJSON(w, http.StatusOK, meResponse{User: user})
+	case http.MethodPut:
+		a.handleUpdateProfile(w, r)
+	default:
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
-		return
 	}
+}
 
+func (a *application) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 	user, err := a.userFromRequest(r)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, meResponse{User: user})
+	var req updateProfileRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	req.Username = strings.TrimSpace(req.Username)
+	req.AvatarURL = strings.TrimSpace(req.AvatarURL)
+
+	if !usernameRegex.MatchString(req.Username) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username must be alphanumeric and 3-20 characters"})
+		return
+	}
+	if req.AvatarURL != "" && !strings.HasPrefix(req.AvatarURL, "/uploads/") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "avatar url must be an uploaded asset"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+	defer cancel()
+
+	if _, err := a.db.ExecContext(ctx, `UPDATE users SET username = ?, avatar_url = ? WHERE id = ?`, req.Username, req.AvatarURL, user.ID); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "unique") {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to update profile"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"user": User{ID: user.ID, Username: req.Username, AvatarURL: req.AvatarURL}})
+}
+
+func (a *application) handleListUsers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+	defer cancel()
+
+	rows, err := a.db.QueryContext(ctx, `SELECT id, username, COALESCE(avatar_url, '') FROM users ORDER BY username ASC`)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list users"})
+		return
+	}
+	defer rows.Close()
+
+	active := a.hub.ActiveUserIDs()
+	users := make([]publicUser, 0)
+	for rows.Next() {
+		var u publicUser
+		if err := rows.Scan(&u.ID, &u.Username, &u.AvatarURL); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to parse users"})
+			return
+		}
+		u.Online = active[u.ID]
+		users = append(users, u)
+	}
+	if err := rows.Err(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to iterate users"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"users": users})
 }
 
 func (a *application) handleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -443,7 +533,12 @@ func (a *application) userFromRequest(r *http.Request) (User, error) {
 		return User{}, fmt.Errorf("get session: %w", err)
 	}
 
-	return User{ID: session.UserID, Username: session.Username}, nil
+	var avatarURL string
+	if err := a.db.QueryRowContext(ctx, `SELECT COALESCE(avatar_url, '') FROM users WHERE id = ?`, session.UserID).Scan(&avatarURL); err != nil {
+		return User{}, fmt.Errorf("load user profile: %w", err)
+	}
+
+	return User{ID: session.UserID, Username: session.Username, AvatarURL: avatarURL}, nil
 }
 
 func setSessionCookie(w http.ResponseWriter, token string, expiresAt time.Time) {

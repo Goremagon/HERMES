@@ -280,6 +280,17 @@ func (h *Hub) broadcastToChannel(channelID int64, data []byte) {
 	}
 }
 
+func (h *Hub) ActiveUserIDs() map[int64]bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	active := make(map[int64]bool)
+	for client := range h.clients {
+		active[client.user.ID] = true
+	}
+	return active
+}
+
 func (h *Hub) sendError(client *Client, message string) {
 	payload, err := json.Marshal(outboundEvent{Type: "error", Data: map[string]string{"message": message}})
 	if err != nil {
