@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 
-const wsScheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
+const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+const socketUrl = `${protocol}//${window.location.host}/api/ws`
 
 export const useChatStore = defineStore('chat', {
   state: () => ({
@@ -18,7 +19,7 @@ export const useChatStore = defineStore('chat', {
       }
 
       this.reconnecting = true
-      this.ws = new WebSocket(`${wsScheme}://${window.location.host}/api/ws`)
+      this.ws = new WebSocket(socketUrl)
 
       this.ws.addEventListener('open', () => {
         this.connected = true

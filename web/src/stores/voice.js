@@ -3,7 +3,10 @@ import { useAuthStore } from './auth'
 import { useChatStore } from './chat'
 
 const rtcConfig = {
-  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+  ],
 }
 
 export const useVoiceStore = defineStore('voice', {
